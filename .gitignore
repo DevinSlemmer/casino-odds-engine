@@ -1,0 +1,17 @@
+# Build folders
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+*.exe
+*.out
+
+# IDE stuff
+.vscode/
+*.user
+*.suo
+*.vcxproj.*
+*.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
