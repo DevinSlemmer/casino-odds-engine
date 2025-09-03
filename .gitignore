@@ -15,3 +15,22 @@
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Visual Studio cache
+.vs/
+
+# Build artifacts
+out/
+build/
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# User/project files
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
