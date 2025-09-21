@@ -1,0 +1,3 @@
+id,created_at,type,params_json,trials,hits,hit_rate,ev
+1,"2025-09-12 19:01:18",dice,"sides=6,bet_on=6,payout=5,seed=42",10000,1636,0.1636,-0.0184
+2,"2025-09-12 19:05:54",dice,"sides=6,bet_on=6,payout=5,seed=16",1000000,166488,0.166488,-0.001072

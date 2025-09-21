@@ -1,11 +1,12 @@
+// src/cli/main.cpp
 #include <iostream>
 #include <string>
 #include <stdexcept>
+#include <filesystem>
+
 #include "core/rng.hpp"
 #include "games/dice.hpp"
-#include <sstream>
 #include "db/sqlite.hpp"
-#include <filesystem>
 
 struct Args {
     std::string game = "dice";
@@ -14,12 +15,14 @@ struct Args {
     int sides = 6;
     int bet_on = 6;
     double payout = 5.0;
-    std::string db_path = "";   // NEW: path to SQLite database (optional)
+    std::string db_path = "";   // path to SQLite database (optional)
 };
 
 Args parse(int argc, char** argv) {
     Args a;
-    auto need = [&](int i) { if (i + 1 >= argc) throw std::runtime_error("Missing value for " + std::string(argv[i])); };
+    auto need = [&](int i) {
+        if (i + 1 >= argc) throw std::runtime_error("Missing value for " + std::string(argv[i]));
+        };
 
     for (int i = 1; i < argc; ++i) {
         std::string s = argv[i];
@@ -32,7 +35,8 @@ Args parse(int argc, char** argv) {
         else if (s == "--db") { need(i); a.db_path = argv[++i]; }
         else if (s == "--help" || s == "-h") {
             std::cout <<
-                "Usage: casino --game dice [--trials N] [--seed S] [--sides K] [--bet-on F] [--payout P]\n";
+                "Usage: casino --game dice "
+                "[--trials N] [--seed S] [--sides K] [--bet-on F] [--payout P] [--db PATH]\n";
             std::exit(0);
         }
     }
@@ -64,44 +68,47 @@ int main(int argc, char** argv) {
             profit_sum += res.profit;
         }
 
-        double hit_rate = static_cast<double>(hits) / args.trials;
-        double ev = profit_sum / args.trials;
+        const double hit_rate = static_cast<double>(hits) / args.trials;
+        const double ev = profit_sum / args.trials;
 
         std::cout << "Game: dice\n"
             << "Trials: " << args.trials << "\n"
             << "Seed: " << args.seed << "\n"
-            << "Sides: " << args.sides << ", Bet on: " << args.bet_on
+            << "Sides: " << args.sides
+            << ", Bet on: " << args.bet_on
             << ", Payout: " << args.payout << "\n"
             << "Hit rate: " << hit_rate << "\n"
             << "EV per play: " << ev << "\n";
 
-
+        // Optional: persist to SQLite
         if (!args.db_path.empty()) {
-            // Ensure parent directory exists
+            // Ensure parent directory exists (so --db data\sim.db works anywhere)
             std::filesystem::path p(args.db_path);
             if (p.has_parent_path()) {
                 std::error_code ec;
-                std::filesystem::create_directories(p.parent_path(), ec); // no throw if fails
+                std::filesystem::create_directories(p.parent_path(), ec); // ignore failure
             }
 
-            // Build params string
-            std::ostringstream params;
-            params << "sides=" << args.sides
-                << ",bet_on=" << args.bet_on
-                << ",payout=" << args.payout
-                << ",seed=" << args.seed;
-
-            // Insert into DB
             db::Sqlite db(args.db_path);
-            db.insert_game("dice", params.str(), args.trials, (int)hits, hit_rate, ev);
+            db.insert_game(
+                "dice",
+                args.seed,
+                args.sides,
+                args.bet_on,
+                args.payout,
+                args.trials,
+                static_cast<int>(hits),
+                hit_rate,
+                ev
+            );
 
-            std::cout << "Saved results to " << std::filesystem::absolute(args.db_path).string() << "\n";
+            std::cout << "Saved results to "
+                << std::filesystem::absolute(args.db_path).string()
+                << "\n";
         }
 
-
-        // For a fair-odds setup (payout = sides-1 when betting one face), EV 0
+        // For a fair-odds setup (payout = sides-1 when betting one face), EV ~ 0.
         return 0;
-
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
