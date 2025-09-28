@@ -1,7 +1,7 @@
-// src/db/sqlite.cpp
 #include "db/sqlite.hpp"
 #include <sqlite3.h>
 #include <stdexcept>
+#include <string>
 
 namespace db {
 
@@ -14,7 +14,7 @@ namespace db {
         if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
             throw std::runtime_error("Failed to open DB: " + path);
         }
-        // New normalized schema
+
         exec(
             "CREATE TABLE IF NOT EXISTS games ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -24,10 +24,20 @@ namespace db {
             "  sides INTEGER NOT NULL,"
             "  bet_on INTEGER NOT NULL,"
             "  payout REAL NOT NULL,"
+            "  wager REAL NOT NULL,"
             "  trials INTEGER NOT NULL,"
             "  hits INTEGER NOT NULL,"
             "  hit_rate REAL NOT NULL,"
-            "  ev REAL NOT NULL"
+            "  total_bet REAL NOT NULL,"
+            "  total_return REAL NOT NULL,"
+            "  net_profit REAL NOT NULL,"
+            "  ev REAL NOT NULL,"
+            "  roi REAL NOT NULL,"
+            "  variance REAL NOT NULL,"
+            "  std_err REAL NOT NULL,"
+            "  ci_lo REAL NOT NULL,"
+            "  ci_hi REAL NOT NULL,"
+            "  runtime_ms INTEGER NOT NULL"
             ");"
         );
     }
@@ -46,29 +56,57 @@ namespace db {
         }
     }
 
-    void Sqlite::insert_game(const std::string& game_type,
+    void Sqlite::insert_game(
+        const std::string& type,
         unsigned long long seed,
-        int sides, int bet_on, double payout,
-        int trials, int hits,
-        double hit_rate, double ev) {
+        int sides, int bet_on, double payout, double wager,
+        int trials, int hits, double hit_rate,
+        double total_bet, double total_return, double net_profit,
+        double ev, double roi,
+        double variance, double std_err, double ci_lo, double ci_hi,
+        long long runtime_ms
+    ) {
         const char* sql =
-            "INSERT INTO games(type, seed, sides, bet_on, payout, trials, hits, hit_rate, ev) "
-            "VALUES(?,?,?,?,?,?,?,?,?);";
+            "INSERT INTO games("
+            " type, seed, sides, bet_on, payout, wager,"
+            " trials, hits, hit_rate,"
+            " total_bet, total_return, net_profit,"
+            " ev, roi,"
+            " variance, std_err, ci_lo, ci_hi,"
+            " runtime_ms"
+            ") VALUES (?,?,?,?,?, ?, ?,?,?, ?, ?,?, ?, ?, ?,?,?,?, ?);";
 
-        sqlite3_stmt* stmt = nullptr;
-        throwIf(sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr), db_);
-        throwIf(sqlite3_bind_text(stmt, 1, game_type.c_str(), -1, SQLITE_TRANSIENT), db_);
-        // Note: bind seed as 64-bit integer (SQLite uses dynamic typing; int64 is fine)
-        throwIf(sqlite3_bind_int64(stmt, 2, static_cast<sqlite3_int64>(seed)), db_);
-        throwIf(sqlite3_bind_int(stmt, 3, sides), db_);
-        throwIf(sqlite3_bind_int(stmt, 4, bet_on), db_);
-        throwIf(sqlite3_bind_double(stmt, 5, payout), db_);
-        throwIf(sqlite3_bind_int(stmt, 6, trials), db_);
-        throwIf(sqlite3_bind_int(stmt, 7, hits), db_);
-        throwIf(sqlite3_bind_double(stmt, 8, hit_rate), db_);
-        throwIf(sqlite3_bind_double(stmt, 9, ev), db_);
-        throwIf(sqlite3_step(stmt), db_);
-        sqlite3_finalize(stmt);
+        sqlite3_stmt* st = nullptr;
+        throwIf(sqlite3_prepare_v2(db_, sql, -1, &st, nullptr), db_);
+
+        int i = 1;
+        throwIf(sqlite3_bind_text(st, i++, type.c_str(), -1, SQLITE_TRANSIENT), db_);
+        throwIf(sqlite3_bind_int64(st, i++, static_cast<sqlite3_int64>(seed)), db_);
+        throwIf(sqlite3_bind_int(st, i++, sides), db_);
+        throwIf(sqlite3_bind_int(st, i++, bet_on), db_);
+        throwIf(sqlite3_bind_double(st, i++, payout), db_);
+        throwIf(sqlite3_bind_double(st, i++, wager), db_);
+
+        throwIf(sqlite3_bind_int(st, i++, trials), db_);
+        throwIf(sqlite3_bind_int(st, i++, hits), db_);
+        throwIf(sqlite3_bind_double(st, i++, hit_rate), db_);
+
+        throwIf(sqlite3_bind_double(st, i++, total_bet), db_);
+        throwIf(sqlite3_bind_double(st, i++, total_return), db_);
+        throwIf(sqlite3_bind_double(st, i++, net_profit), db_);
+
+        throwIf(sqlite3_bind_double(st, i++, ev), db_);
+        throwIf(sqlite3_bind_double(st, i++, roi), db_);
+
+        throwIf(sqlite3_bind_double(st, i++, variance), db_);
+        throwIf(sqlite3_bind_double(st, i++, std_err), db_);
+        throwIf(sqlite3_bind_double(st, i++, ci_lo), db_);
+        throwIf(sqlite3_bind_double(st, i++, ci_hi), db_);
+
+        throwIf(sqlite3_bind_int64(st, i++, static_cast<sqlite3_int64>(runtime_ms)), db_);
+
+        throwIf(sqlite3_step(st), db_);
+        sqlite3_finalize(st);
     }
 
 } // namespace db
