@@ -1,9 +1,10 @@
 # scripts/run_batch.py
 # Serial batch runner for casino sims (dice).
 # - Trials spec supports ranges with step: "1000..10000:1000" (and CSV mixing)
+# - Bet-on spec supports CSV or ranges: "6", "1..6", "1,3,6"
+# - --all-sides sweeps 1..sides (overrides --bet-on)
 # - Dedupe handling: --dedupe-mode {skip,index,none}
 # - Ensures DB schema exists; can create UNIQUE index when requested
-# - Serial execution to avoid SQLite write-lock contention
 # - QoL: --sleep-ms, --dry-run, --verbose
 
 import argparse
@@ -94,7 +95,7 @@ def expand_seeds(spec: str) -> List[int]:
             out.extend(range(a, b + step, step))
         else:
             out.append(int(float(part)))
-    return out
+    return sorted(set(out))
 
 def expand_trials(spec: str) -> List[int]:
     """
@@ -120,6 +121,24 @@ def expand_trials(spec: str) -> List[int]:
             if (b - a) * step < 0:
                 step = -abs(step)
             out.extend(range(a, b + (1 if step > 0 else -1), step))
+        else:
+            out.append(int(float(part)))
+    return sorted(set(out))
+
+def expand_betons(spec: str) -> List[int]:
+    """
+    '6' or '1..6' or '1,3,6'
+    """
+    out: List[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ".." in part:
+            a, b = part.split("..", 1)
+            a, b = int(float(a)), int(float(b))
+            step = 1 if b >= a else -1
+            out.extend(range(a, b + step, step))
         else:
             out.append(int(float(part)))
     return sorted(set(out))
@@ -151,7 +170,11 @@ def main():
     ap.add_argument("--trials", default="10000,100000",
                     help="CSV or ranges with step, e.g. '1000..10000:1000,50000,100000'")
     ap.add_argument("--sides", type=int, default=6, help="Number of sides")
-    ap.add_argument("--bet-on", type=int, default=6, help="Bet face (1..sides)")
+    # NEW: bet-on allows CSV/range; all-sides sweeps 1..sides
+    ap.add_argument("--bet-on", type=str, default="6",
+                    help="Bet face(s). CSV or ranges: '6' or '1..6' or '1,3,6'")
+    ap.add_argument("--all-sides", action="store_true",
+                    help="Ignore --bet-on and sweep all faces 1..sides")
     ap.add_argument("--payouts", default="5", help="CSV of payouts, e.g. '4.5,5,6'")
     ap.add_argument("--wagers", default="1", help="CSV of wagers, e.g. '1,5,10'")
     ap.add_argument("--dedupe-mode", choices=["skip","index","none"], default="skip",
@@ -164,25 +187,31 @@ def main():
     db_path = str(Path(args.db))
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Ensure schema before indexing
+    # Ensure schema & indexes
     ensure_schema(db_path)
     create_indexes(db_path, unique=(args.dedupe_mode == "index"))
 
-    # Build parameter grid
+    # Grids
     seeds = expand_seeds(args.seeds)
     trials = expand_trials(args.trials)
     payouts = [float(x) for x in args.payouts.split(",") if x.strip()]
     wagers = [float(x) for x in args.wagers.split(",") if x.strip()]
+    bet_ons = list(range(1, args.sides + 1)) if args.all_sides else expand_betons(args.bet_on)
+
+    # Validate bet_ons within 1..sides
+    bet_ons = [b for b in bet_ons if 1 <= b <= int(args.sides)]
+    if not bet_ons:
+        raise SystemExit(f"No valid bet_on values in range 1..{args.sides}. (Use --bet-on or --all-sides)")
 
     grid = [{
         "type": "dice",
         "seed": int(seed),
         "trials": int(t),
         "sides": int(args.sides),
-        "bet_on": int(args.bet_on),
+        "bet_on": int(bet),
         "payout": float(payout),
         "wager": float(wager),
-    } for seed, t, payout, wager in itertools.product(seeds, trials, payouts, wagers)]
+    } for seed, t, payout, wager, bet in itertools.product(seeds, trials, payouts, wagers, bet_ons)]
 
     # Dedupe if requested
     if args.dedupe_mode == "skip":
@@ -209,13 +238,13 @@ def main():
 
     if args.dry_run:
         for p in grid:
-            tag = f"seed={p['seed']}, trials={p['trials']}, payout={p['payout']}, wager={p['wager']}"
+            tag = f"seed={p['seed']}, trials={p['trials']}, sides={p['sides']}, bet_on={p['bet_on']}, payout={p['payout']}, wager={p['wager']}"
             print("[PLAN]", tag)
         print(f"Planned {total} runs (dry-run).")
         return
 
     for idx, p in enumerate(grid, start=1):
-        tag = f"seed={p['seed']}, trials={p['trials']}, payout={p['payout']}, wager={p['wager']}"
+        tag = f"seed={p['seed']}, trials={p['trials']}, sides={p['sides']}, bet_on={p['bet_on']}, payout={p['payout']}, wager={p['wager']}"
         print(f"({idx}/{total}) running {tag} ...")
         rc, tail = run_one(str(exe_path), db_abs, p, cwd, verbose=args.verbose)
         if rc == 0:
@@ -229,8 +258,17 @@ def main():
 
     print(f"\nDone. Successes: {successes}, Failures: {failures}")
     if failures > 0:
-        print("Tip: if you ever re-enable dedupe=index or parallel runs elsewhere, "
-              "ensure your C++ DB layer uses PRAGMA journal_mode=WAL and sqlite3_busy_timeout.")
+        print("Tip: to avoid accidental duplicates across runs, use --dedupe-mode index or keep --dedupe-mode skip.")
 
 if __name__ == "__main__":
     main()
+
+
+# # All sides for one seed (great for your new grouped plot)
+# python scripts\run_batch.py --db data\sim.db --seeds 42 --trials "1e4,1e5" --sides 6 --all-sides
+
+# # Explicit bet-on range
+# python scripts\run_batch.py --db data\sim.db --seeds 42 --trials "1000..10000:1000" --bet-on 1..6
+
+# # Mixed: multiple seeds, wagers and payouts, sweeping sides
+# python scripts\run_batch.py --db data\sim.db --seeds 1..3 --trials "5000,20000" --all-sides --wagers 1,5 --payouts 4.5,5

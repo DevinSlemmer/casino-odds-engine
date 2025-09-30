@@ -1,7 +1,8 @@
 # scripts/plot_runs.py
-# Plot casino runs from SQLite (schema v3). One line per seed.
+# Plot casino runs from SQLite (schema v3).
 # Metrics: ev (default), roi, hit_rate, ci_width
 # Options: --with-ci (EV only), filters, log-x, save to PNG, list metrics.
+# New: --group-by {seed, seed+bet} to draw one line per seed or per (seed, bet_on)
 
 import argparse
 import sqlite3
@@ -45,20 +46,45 @@ def load_runs(db_path: str) -> pd.DataFrame:
         df["ci_width"] = None
     return df
 
+def expand_betons(spec: str):
+    """
+    Expand '6' or '1..6' or '1,3,6' into a sorted, unique list of ints.
+    """
+    xs = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ".." in part:
+            a, b = part.split("..", 1)
+            a, b = int(float(a)), int(float(b))
+            step = 1 if b >= a else -1
+            xs.extend(range(a, b + step, step))
+        else:
+            xs.append(int(float(part)))
+    return sorted(set(xs))
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Plot EV/ROI/HitRate/CI-width vs trials (one line per seed).")
+    ap = argparse.ArgumentParser(description="Plot EV/ROI/HitRate/CI-width vs trials (one line per seed or per (seed, bet)).")
     ap.add_argument("db", nargs="?", help="Path to SQLite DB (e.g. data/sim.db)")
     ap.add_argument("--list-metrics", action="store_true", help="List available metrics and exit")
     ap.add_argument("--metric", choices=METRICS, default="ev", help="Y-axis metric")
     ap.add_argument("--with-ci", action="store_true", help="For metric=ev, fill 95%% CI band using ci_lo/ci_hi")
+
+    # Filters
     ap.add_argument("--min-trials", type=float, default=None, help="Keep runs with trials >= this")
     ap.add_argument("--max-trials", type=float, default=None, help="Keep runs with trials <= this")
     ap.add_argument("--sides", type=int, default=None, help="Filter to number of sides")
     ap.add_argument("--payout", type=float, default=None, help="Filter to payout")
     ap.add_argument("--wager", type=float, default=None, help="Filter to wager")
-    ap.add_argument("--bet-on", type=int, default=None, help="Filter to bet_on face")
+    ap.add_argument("--bet-on", type=str, default=None, help="Filter to one or more bet_on faces. Accepts CSV or ranges, e.g. '6', '1..6', or '1,3,6'")
     ap.add_argument("--seed", type=int, nargs="*", default=None, help="Only include these seed(s)")
+
+    # Axes / grouping / output
     ap.add_argument("--log-x", action="store_true", help="Use logarithmic x-axis for trials")
+    ap.add_argument("--group-by", choices=["seed", "seed+bet"], default="seed",
+                    help="Group lines by 'seed' (default) or by 'seed+bet' for one line per (seed, bet_on).")
     ap.add_argument("--title", type=str, default=None, help="Custom plot title")
     ap.add_argument("--no-legend", action="store_true", help="Hide legend")
     ap.add_argument("--save", type=str, default=None, help="Save PNG to this path instead of showing")
@@ -88,20 +114,31 @@ def main():
         df = df[df["payout"] == args.payout]
     if args.wager is not None:
         df = df[df["wager"] == args.wager]
-    if args.bet_on is not None:
-        df = df[df["bet_on"] == args.bet_on]
+    if args.bet_on:
+        bet_list = expand_betons(args.bet_on)
+        if len(bet_list) == 0:
+            print("Warning: --bet-on provided but parsed no valid values.")
+        else:
+            df = df[df["bet_on"].isin(bet_list)]
     if args.seed is not None and len(args.seed) > 0:
         df = df[df["seed"].isin(args.seed)]
 
     # Metric-specific requirements
     metric = args.metric
-    need_cols = ["trials", "seed", metric]
+    need_cols = ["trials", metric]
+    # We always need seed for labeling; if grouping by seed+bet, we also need bet_on
+    need_cols.append("seed")
+    if args.group_by == "seed+bet":
+        need_cols.append("bet_on")
+
     df = df.dropna(subset=need_cols)
     if df.empty:
         print("No rows left after filters.")
         return
 
-    df = df.sort_values(["seed", "trials"])
+    # Sort for nice line drawing
+    sort_cols = ["seed", "trials"] if args.group_by == "seed" else ["seed", "bet_on", "trials"]
+    df = df.sort_values(sort_cols)
 
     # Labels
     y_labels = {
@@ -111,20 +148,29 @@ def main():
         "ci_width": "95% CI width of EV ($/play)"
     }
     ylab = y_labels.get(metric, metric)
-    default_title = f"Dice: {metric} vs trials (one line per seed)"
+
+    if args.group_by == "seed":
+        default_title = f"Dice: {metric} vs trials (one line per seed)"
+        legend_title = "Seed"
+        group_cols = ["seed"]
+        label_fmt = lambda key: f"seed={int(key[0])}"
+    else:
+        default_title = f"Dice: {metric} vs trials (one line per seed,bet_on)"
+        legend_title = "Seed, Bet"
+        group_cols = ["seed", "bet_on"]
+        label_fmt = lambda key: f"seed={int(key[0])}, bet_on={int(key[1])}"
+
     title = args.title if args.title else default_title
 
     # Plot
     plt.figure()
-    for seed, g in df.groupby("seed", dropna=False):
-        g = g.drop_duplicates(subset=["trials"], keep="last")
-
-        # main line
-        plt.plot(g["trials"], g[metric], label=f"seed={int(seed)}")
+    for key, g in df.groupby(group_cols, dropna=False):
+        g = g.drop_duplicates(subset=["trials"], keep="last").sort_values("trials")
+        plt.plot(g["trials"], g[metric], label=label_fmt(key))
 
         # Optional CI band for EV
-        if metric == "ev" and args.with_ci and "ci_lo" in g.columns and "ci_hi" in g.columns:
-            gg = g.dropna(subset=["ci_lo","ci_hi"])
+        if metric == "ev" and args.with_ci and {"ci_lo", "ci_hi"}.issubset(g.columns):
+            gg = g.dropna(subset=["ci_lo", "ci_hi"])
             if not gg.empty:
                 plt.fill_between(gg["trials"], gg["ci_lo"], gg["ci_hi"], alpha=0.15)
 
@@ -140,7 +186,7 @@ def main():
     plt.ylabel(ylab)
 
     if not args.no_legend:
-        plt.legend(title="Seed", fontsize="small", ncol=2)
+        plt.legend(title=legend_title, fontsize="small", ncol=2)
 
     plt.tight_layout()
 
@@ -156,20 +202,17 @@ if __name__ == "__main__":
     main()
 
 
-# # List metrics
-# python scripts\plot_runs.py --list-metrics
+# # Keep seed fixed, vary bet_on (one line per side)
+# python scripts\plot_runs.py data\sim.db --metric ev --sides 6 --payout 5 --seed 42 --group-by seed+bet
 
-# # EV with 95% CI band
-# python scripts\plot_runs.py data\sim.db --metric ev --with-ci --sides 6 --payout 5
+# # Multiple seeds, all sides, log-x axis, CI band
+# python scripts\plot_runs.py data\sim.db --metric ev --with-ci --sides 6 --payout 5 --group-by seed+bet --log-x
 
-# # CI width shrinking vs trials (per seed)
-# python scripts\plot_runs.py data\sim.db --metric ci_width --sides 6 --payout 5 --log-x
+# # Only look at sides 1, 3, and 6
+# python scripts\plot_runs.py data\sim.db --metric ev --bet-on 1,3,6
 
-# # ROI by seed
-# python scripts\plot_runs.py data\sim.db --metric roi --sides 6 --payout 5
+# # Look at all sides (1..6) for seed 42
+# python scripts\plot_runs.py data\sim.db --metric ev --seed 42 --bet-on 1..6 --group-by seed+bet
 
-# # Hit rate (should approach 1/sides)
-# python scripts\plot_runs.py data\sim.db --metric hit_rate --sides 6 --payout 5
-
-# # Save a PNG for your README
-# python scripts\plot_runs.py data\sim.db --metric ev --with-ci --sides 6 --payout 5 --save docs/ev_by_seed.png
+# # Compare even sides only, log-scaled x
+# python scripts\plot_runs.py data\sim.db --metric hit_rate --bet-on 2,4,6 --log-x
