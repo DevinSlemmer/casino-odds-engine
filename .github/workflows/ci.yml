@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} -- -j 2
+
+      - name: Run tests (ctest)
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+
+      # ---- Python smoke test: C++ -> SQLite -> plot PNG ----
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas matplotlib
+
+      - name: Smoke run → DB
+        shell: bash
+        run: |
+          set -e
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            EXE="build/src/${{ matrix.build_type }}/casino.exe"
+          else
+            # Linux build usually lands at build/src/casino for single-config
+            # but on multi-config it’s build/src/Release/casino – handle both:
+            EXE="build/src/casino"
+            if [[ ! -x "$EXE" ]]; then
+              EXE="build/src/${{ matrix.build_type }}/casino"
+            fi
+          fi
+          "$EXE" --trials 1000 --seed 123 --sides 6 --bet-on 6 --payout 5 --wager 1 --db data/ci.db
+
+      - name: Smoke plot (headless)
+        env:
+          MPLBACKEND: Agg
+        run: |
+          python scripts/plot_runs.py data/ci.db --metric ev --sides 6 --payout 5 --save ci_ev.png
+
+      - name: Upload artifact (plot)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-plots-${{ matrix.os }}
+          path: ci_ev.png
