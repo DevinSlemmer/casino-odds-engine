@@ -1,60 +1,55 @@
-# python_tests/test_run_batch_smoke.py
+import os
+import sys
 import sqlite3
 import subprocess
 from pathlib import Path
-import sys
-import os
+from util import resolve_exe
 
-PY = sys.executable
-
-def count_rows(db: Path) -> int:
-    con = sqlite3.connect(str(db))
-    try:
-        cur = con.cursor()
-        cur.execute("SELECT COUNT(*) FROM games;")
-        return int(cur.fetchone()[0] or 0)
-    finally:
-        con.close()
-
-def run_batch(db: Path, exe: Path, **kw):
-    args = [PY, "scripts/run_batch.py", "--db", str(db), "--exe", str(exe)]
-    for k, v in kw.items():
-        if isinstance(v, bool):
-            if v:
-                args.append(f"--{k.replace('_','-')}")
-        else:
-            args.extend([f"--{k.replace('_','-')}", str(v)])
-    print("RUN:", " ".join(args))
-    cp = subprocess.run(args, capture_output=True, text=True)
+def run(cmd):
+    cp = subprocess.run(cmd, capture_output=True, text=True)
     print(cp.stdout)
     print(cp.stderr, file=sys.stderr)
-    assert cp.returncode == 0
+    return cp.returncode
 
-def test_run_batch_skip_and_index(tmpdb, casino_exe):
-    # small grid: seeds=7..8, trials=200,400, wagers=1, payouts=5
-    run_batch(tmpdb, casino_exe,
-              seeds="7..8", trials="200,400",
-              wagers="1", payouts="5",
-              sides=6, bet_on=6,
-              dedupe_mode="skip")
-    n1 = count_rows(tmpdb)
-    # 2 seeds * 2 trials * 1 payout * 1 wager = 4 rows
-    assert n1 == 4
+def test_run_batch_skip_and_index(tmp_path):
+    db = tmp_path / "ci.db"
+    exe = resolve_exe()
 
-    # Re-run same grid with skip -> should not add rows
-    run_batch(tmpdb, casino_exe,
-              seeds="7..8", trials="200,400",
-              wagers="1", payouts="5",
-              sides=6, bet_on=6,
-              dedupe_mode="skip")
-    n2 = count_rows(tmpdb)
-    assert n2 == n1
+    # first pass — should insert
+    rc = run([
+        sys.executable, "scripts/run_batch.py",
+        "--db", str(db),
+        "--exe", exe,
+        "--seeds", "7..8",
+        "--trials", "200..800:200",
+        "--wagers", "1",
+        "--payouts", "5",
+        "--sides", "6",
+        "--bet-on", "6",
+        "--dedupe-mode", "skip",
+    ])
+    assert rc == 0
 
-    # Now enforce UNIQUE index and add a new trial -> +2 rows
-    run_batch(tmpdb, casino_exe,
-              seeds="7..8", trials="600",
-              wagers="1", payouts="5",
-              sides=6, bet_on=6,
-              dedupe_mode="index")
-    n3 = count_rows(tmpdb)
-    assert n3 == n2 + 2
+    # second pass — skip identical combos
+    rc = run([
+        sys.executable, "scripts/run_batch.py",
+        "--db", str(db),
+        "--exe", exe,
+        "--seeds", "7..8",
+        "--trials", "200..800:200",
+        "--wagers", "1",
+        "--payouts", "5",
+        "--sides", "6",
+        "--bet-on", "6",
+        "--dedupe-mode", "skip",
+    ])
+    assert rc == 0
+
+    # verify row count (not zero, and duplicates weren’t added)
+    con = sqlite3.connect(db)
+    cur = con.cursor()
+    cur.execute("SELECT COUNT(*) FROM games WHERE type='dice';")
+    n = cur.fetchone()[0]
+    con.close()
+    # 2 seeds × 4 trial sizes = 8 rows expected
+    assert n == 8

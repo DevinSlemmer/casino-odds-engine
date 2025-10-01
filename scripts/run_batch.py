@@ -7,6 +7,7 @@
 # - Ensures DB schema exists; can create UNIQUE index when requested
 # - QoL: --sleep-ms, --dry-run, --verbose
 
+from __future__ import annotations
 import argparse
 import itertools
 import os
@@ -16,8 +17,19 @@ import time
 from pathlib import Path
 from typing import List, Dict
 
-DEFAULT_EXE_WIN = r".\out\build\x64-Debug\src\casino.exe"
-DEFAULT_EXE_UNIX = "./build/src/casino"
+def default_exe() -> str:
+    candidates = [
+        Path("build/src/casino"),
+        Path("build/src/Release/casino"),
+        Path("build/src/Debug/casino"),
+        Path("build/src/casino.exe"),
+        Path("build/src/Release/casino.exe"),
+        Path("build/src/Debug/casino.exe"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return str(candidates[0])  # fallback; tests pass --exe explicitly
 
 def ensure_schema(db_path: str):
     con = sqlite3.connect(db_path)
@@ -98,11 +110,6 @@ def expand_seeds(spec: str) -> List[int]:
     return sorted(set(out))
 
 def expand_trials(spec: str) -> List[int]:
-    """
-    '1000,2000,5000'
-    '1000..10000:1000' => 1000,2000,...,10000
-    Mix allowed: '1000..10000:1000,50000,100000'
-    """
     out: List[int] = []
     for part in spec.split(","):
         part = part.strip()
@@ -126,9 +133,6 @@ def expand_trials(spec: str) -> List[int]:
     return sorted(set(out))
 
 def expand_betons(spec: str) -> List[int]:
-    """
-    '6' or '1..6' or '1,3,6'
-    """
     out: List[int] = []
     for part in spec.split(","):
         part = part.strip()
@@ -161,16 +165,14 @@ def run_one(exe: str, db_path: str, p: Dict, cwd: Path, verbose: bool=False) -> 
     tail = (proc.stdout + "\n" + proc.stderr)[-600:]
     return proc.returncode, tail
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Serial batch runner for casino sims (dice).")
     ap.add_argument("--db", required=True, help="Path to SQLite DB (e.g. data/sim.db)")
-    ap.add_argument("--exe", default=DEFAULT_EXE_WIN if os.name == "nt" else DEFAULT_EXE_UNIX,
-                    help="Path to casino executable")
+    ap.add_argument("--exe", default=None, help="Path to casino executable (auto-detected if omitted)")
     ap.add_argument("--seeds", default="42", help="CSV or ranges, e.g. '1..10' or '1,2,5'")
     ap.add_argument("--trials", default="10000,100000",
                     help="CSV or ranges with step, e.g. '1000..10000:1000,50000,100000'")
     ap.add_argument("--sides", type=int, default=6, help="Number of sides")
-    # NEW: bet-on allows CSV/range; all-sides sweeps 1..sides
     ap.add_argument("--bet-on", type=str, default="6",
                     help="Bet face(s). CSV or ranges: '6' or '1..6' or '1,3,6'")
     ap.add_argument("--all-sides", action="store_true",
@@ -182,23 +184,23 @@ def main():
     ap.add_argument("--sleep-ms", type=int, default=0, help="Sleep this many ms between runs")
     ap.add_argument("--dry-run", action="store_true", help="Print the run plan but do not execute")
     ap.add_argument("--verbose", action="store_true", help="Print each command line before executing")
-    args = ap.parse_args()
+    return ap
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     db_path = str(Path(args.db))
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Ensure schema & indexes
     ensure_schema(db_path)
     create_indexes(db_path, unique=(args.dedupe_mode == "index"))
 
-    # Grids
     seeds = expand_seeds(args.seeds)
     trials = expand_trials(args.trials)
     payouts = [float(x) for x in args.payouts.split(",") if x.strip()]
     wagers = [float(x) for x in args.wagers.split(",") if x.strip()]
     bet_ons = list(range(1, args.sides + 1)) if args.all_sides else expand_betons(args.bet_on)
 
-    # Validate bet_ons within 1..sides
     bet_ons = [b for b in bet_ons if 1 <= b <= int(args.sides)]
     if not bet_ons:
         raise SystemExit(f"No valid bet_on values in range 1..{args.sides}. (Use --bet-on or --all-sides)")
@@ -213,7 +215,6 @@ def main():
         "wager": float(wager),
     } for seed, t, payout, wager, bet in itertools.product(seeds, trials, payouts, wagers, bet_ons)]
 
-    # Dedupe if requested
     if args.dedupe_mode == "skip":
         before = len(grid)
         grid = [p for p in grid if not exists_row(db_path, p)]
@@ -223,9 +224,9 @@ def main():
 
     if not grid:
         print("Nothing to do.")
-        return
+        return 0
 
-    exe_path = Path(args.exe)
+    exe_path = Path(args.exe) if args.exe else Path(default_exe())
     if not exe_path.exists():
         raise SystemExit(f"Executable not found: {exe_path} "
                          f"(hint: pass --exe .\\out\\build\\x64-Debug\\src\\casino.exe)")
@@ -241,7 +242,7 @@ def main():
             tag = f"seed={p['seed']}, trials={p['trials']}, sides={p['sides']}, bet_on={p['bet_on']}, payout={p['payout']}, wager={p['wager']}"
             print("[PLAN]", tag)
         print(f"Planned {total} runs (dry-run).")
-        return
+        return 0
 
     for idx, p in enumerate(grid, start=1):
         tag = f"seed={p['seed']}, trials={p['trials']}, sides={p['sides']}, bet_on={p['bet_on']}, payout={p['payout']}, wager={p['wager']}"
@@ -259,9 +260,11 @@ def main():
     print(f"\nDone. Successes: {successes}, Failures: {failures}")
     if failures > 0:
         print("Tip: to avoid accidental duplicates across runs, use --dedupe-mode index or keep --dedupe-mode skip.")
+    return failures
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
+
 
 
 # # All sides for one seed (great for your new grouped plot)

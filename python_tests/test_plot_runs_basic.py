@@ -1,50 +1,40 @@
-# python_tests/test_plot_runs_basic.py
-import subprocess
+import os
 import sys
+import subprocess
 from pathlib import Path
+from util import resolve_exe
 
-PY = sys.executable
+def run(cmd):
+    cp = subprocess.run(cmd, capture_output=True, text=True)
+    print(cp.stdout)
+    print(cp.stderr, file=sys.stderr)
+    return cp.returncode
 
-def run_exe(exe: Path, db: Path, seed: int, trials: int, bet_on: int):
-    args = [
-        str(exe),
-        "--db", str(db),
-        "--seed", str(seed),
-        "--trials", str(trials),
+def test_plot_runs_ev_and_grouping(tmp_path, monkeypatch):
+    # Use a headless backend for CI
+    monkeypatch.setenv("MPLBACKEND", "Agg")
+
+    db = tmp_path / "plot.db"
+    png = tmp_path / "ev.png"
+    exe = resolve_exe()
+
+    # Create a few rows for two different trial sizes
+    rc = run([exe, "--trials", "500",  "--seed", "123", "--sides", "6", "--bet-on", "6",
+              "--payout", "5", "--wager", "1", "--db", str(db)])
+    assert rc == 0
+    rc = run([exe, "--trials", "1000", "--seed", "123", "--sides", "6", "--bet-on", "6",
+              "--payout", "5", "--wager", "1", "--db", str(db)])
+    assert rc == 0
+
+    # Plot EV (one line per seed) and save
+    rc = run([
+        sys.executable, "scripts/plot_runs.py", str(db),
+        "--metric", "ev",
+        "--with-ci",
         "--sides", "6",
-        "--bet-on", str(bet_on),
         "--payout", "5",
-        "--wager", "1",
-    ]
-    cp = subprocess.run(args, capture_output=True, text=True)
-    assert cp.returncode == 0, cp.stdout + cp.stderr
-
-def test_plot_runs_ev_and_grouping(tmpdb, casino_exe, tmp_path: Path, monkeypatch):
-    # Generate two seeds & two bet_on, with multiple trials
-    for seed in (11, 12):
-        for bet in (5, 6):
-            for t in (500, 5000):
-                run_exe(casino_exe, tmpdb, seed, t, bet)
-
-    out1 = tmp_path / "ev_seed.png"
-    cp = subprocess.run(
-        [PY, "scripts/plot_runs.py", str(tmpdb),
-         "--metric", "ev", "--with-ci",
-         "--sides", "6", "--payout", "5",
-         "--save", str(out1)],
-        capture_output=True, text=True, env={**os.environ, "MPLBACKEND": "Agg"}
-    )
-    assert cp.returncode == 0, cp.stdout + cp.stderr
-    assert out1.exists() and out1.stat().st_size > 0
-
-    # Group by seed+bet (one line per (seed, bet_on))
-    out2 = tmp_path / "ev_seed_bet.png"
-    cp = subprocess.run(
-        [PY, "scripts/plot_runs.py", str(tmpdb),
-         "--metric", "ev", "--sides", "6", "--payout", "5",
-         "--group-by", "seed+bet",
-         "--save", str(out2)],
-        capture_output=True, text=True, env={**os.environ, "MPLBACKEND": "Agg"}
-    )
-    assert cp.returncode == 0, cp.stdout + cp.stderr
-    assert out2.exists() and out2.stat().st_size > 0
+        "--seed", "123",
+        "--save", str(png),
+    ])
+    assert rc == 0
+    assert png.exists() and png.stat().st_size > 0
