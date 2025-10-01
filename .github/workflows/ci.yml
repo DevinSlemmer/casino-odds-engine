@@ -20,8 +20,15 @@ jobs:
       - name: Configure (CMake)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
 
-      - name: Build
-        run: cmake --build build --config ${{ matrix.build_type }} -- -j 2
+      # MSBuild uses /m for parallelism
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release -- /m
+
+      # Make/Ninja use -j
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --config Release -- -j 2
 
       - name: Run tests (ctest)
         run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
