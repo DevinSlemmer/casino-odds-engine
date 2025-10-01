@@ -18,18 +18,25 @@ from pathlib import Path
 from typing import List, Dict
 
 def default_exe() -> str:
+    from pathlib import Path
     candidates = [
         Path("build/src/casino"),
+        Path("build/casino"),
         Path("build/src/Release/casino"),
+        Path("build/Release/casino"),
         Path("build/src/Debug/casino"),
+        Path("build/Debug/casino"),
         Path("build/src/casino.exe"),
         Path("build/src/Release/casino.exe"),
+        Path("build/Release/casino.exe"),
         Path("build/src/Debug/casino.exe"),
+        Path("build/Debug/casino.exe"),
     ]
     for p in candidates:
         if p.exists():
             return str(p)
-    return str(candidates[0])  # fallback; tests pass --exe explicitly
+    raise SystemExit("Executable not found. Pass --exe or build first.")
+
 
 def ensure_schema(db_path: str):
     con = sqlite3.connect(db_path)
