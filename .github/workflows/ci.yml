@@ -130,11 +130,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $env:MPLBACKEND = 'Agg'
           # d6
-          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed      --save artifacts\batch_ev_by_seed_d6.png
-          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d6.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 6 --payout 5 --group-by seed      --save artifacts\batch_ev_by_seed_d6.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --sides 6 --payout 5 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d6.png
           # d8
-          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed      --save artifacts\batch_ev_by_seed_d8.png
-          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d8.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 8 --payout 7 --group-by seed      --save artifacts\batch_ev_by_seed_d8.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --sides 8 --payout 7 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d8.png
 
       - name: Batch plots (Unix)
         if: runner.os != 'Windows'
@@ -143,11 +143,11 @@ jobs:
         run: |
           mkdir -p artifacts
           # d6
-          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed     --save artifacts/batch_ev_by_seed_d6.png
-          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d6.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 6 --payout 5 --group-by seed     --save artifacts/batch_ev_by_seed_d6.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --sides 6 --payout 5 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d6.png
           # d8
-          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed     --save artifacts/batch_ev_by_seed_d8.png
-          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d8.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 8 --payout 7 --group-by seed     --save artifacts/batch_ev_by_seed_d8.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --sides 8 --payout 7 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d8.png
 
       # Upload *all* plots (smoke + batch)
       - name: Upload artifacts (all plots)
