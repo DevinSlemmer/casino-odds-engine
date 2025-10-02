@@ -102,10 +102,10 @@ jobs:
           $env:PYTHONWARNINGS = 'ignore'
           # d6 fair (sides=6, payout=6), seeds 10..12, all faces, trials 100..3000 step 100
           python scripts\run_batch.py --db data\ci_batch.db --exe build\src\${{ matrix.build_type }}\casino.exe `
-            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 6 --wagers 1
+            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 5 --wagers 1
           # d8 fair (sides=8, payout=8)
           python scripts\run_batch.py --db data\ci_batch.db --exe build\src\${{ matrix.build_type }}\casino.exe `
-            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 8 --wagers 1
+            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 7 --wagers 1
 
       - name: Batch run (Unix) — d6 and d8
         if: runner.os != 'Windows'
