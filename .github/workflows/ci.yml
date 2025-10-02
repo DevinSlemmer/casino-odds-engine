@@ -115,9 +115,9 @@ jobs:
           EXE="build/src/casino"
           [[ -x "$EXE" ]] || EXE="build/src/${{ matrix.build_type }}/casino"
           python scripts/run_batch.py --db data/ci_batch.db --exe "$EXE" \
-            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 6 --wagers 1
+            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 5 --wagers 1
           python scripts/run_batch.py --db data/ci_batch.db --exe "$EXE" \
-            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 8 --wagers 1
+            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 7 --wagers 1
 
       # =========================
       # 3) FOUR PLOTS from batch

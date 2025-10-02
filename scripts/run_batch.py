@@ -19,6 +19,7 @@ from typing import List, Dict
 DEFAULT_EXE_WIN = r".\out\build\x64-Debug\src\casino.exe"
 DEFAULT_EXE_UNIX = "./build/src/casino"
 
+
 def ensure_schema(db_path: str):
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -50,6 +51,7 @@ def ensure_schema(db_path: str):
     con.commit()
     con.close()
 
+
 def create_indexes(db_path: str, unique: bool = False):
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -65,6 +67,7 @@ def create_indexes(db_path: str, unique: bool = False):
         """)
     con.commit()
     con.close()
+
 
 def exists_row(db_path: str, params: Dict) -> bool:
     con = sqlite3.connect(db_path)
@@ -82,6 +85,7 @@ def exists_row(db_path: str, params: Dict) -> bool:
     con.close()
     return r is not None
 
+
 def expand_seeds(spec: str) -> List[int]:
     out: List[int] = []
     for part in spec.split(","):
@@ -96,6 +100,7 @@ def expand_seeds(spec: str) -> List[int]:
         else:
             out.append(int(float(part)))
     return sorted(set(out))
+
 
 def expand_trials(spec: str) -> List[int]:
     """
@@ -125,6 +130,7 @@ def expand_trials(spec: str) -> List[int]:
             out.append(int(float(part)))
     return sorted(set(out))
 
+
 def expand_betons(spec: str) -> List[int]:
     """
     '6' or '1..6' or '1,3,6'
@@ -143,9 +149,13 @@ def expand_betons(spec: str) -> List[int]:
             out.append(int(float(part)))
     return sorted(set(out))
 
-def run_one(exe: str, db_path: str, p: Dict, cwd: Path, verbose: bool=False) -> tuple[int, str]:
+
+def run_one(exe_abs: str, db_path_abs: str, p: Dict, verbose: bool = False) -> tuple[int, str]:
+    """
+    Launch the simulator once (no cwd override). exe_abs and db_path_abs must be absolute.
+    """
     args = [
-        exe,
+        exe_abs,
         "--game", "dice",
         "--seed", str(p["seed"]),
         "--trials", str(p["trials"]),
@@ -153,13 +163,14 @@ def run_one(exe: str, db_path: str, p: Dict, cwd: Path, verbose: bool=False) -> 
         "--bet-on", str(p["bet_on"]),
         "--payout", str(p["payout"]),
         "--wager", str(p["wager"]),
-        "--db", db_path,
+        "--db", db_path_abs,
     ]
     if verbose:
         print(">", " ".join(args))
-    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(args, capture_output=True, text=True)
     tail = (proc.stdout + "\n" + proc.stderr)[-600:]
     return proc.returncode, tail
+
 
 def main():
     ap = argparse.ArgumentParser(description="Serial batch runner for casino sims (dice).")
@@ -170,22 +181,24 @@ def main():
     ap.add_argument("--trials", default="10000,100000",
                     help="CSV or ranges with step, e.g. '1000..10000:1000,50000,100000'")
     ap.add_argument("--sides", type=int, default=6, help="Number of sides")
-    # NEW: bet-on allows CSV/range; all-sides sweeps 1..sides
+    # bet-on allows CSV/range; all-sides sweeps 1..sides
     ap.add_argument("--bet-on", type=str, default="6",
                     help="Bet face(s). CSV or ranges: '6' or '1..6' or '1,3,6'")
     ap.add_argument("--all-sides", action="store_true",
                     help="Ignore --bet-on and sweep all faces 1..sides")
     ap.add_argument("--payouts", default="5", help="CSV of payouts, e.g. '4.5,5,6'")
     ap.add_argument("--wagers", default="1", help="CSV of wagers, e.g. '1,5,10'")
-    ap.add_argument("--dedupe-mode", choices=["skip","index","none"], default="skip",
+    ap.add_argument("--dedupe-mode", choices=["skip", "index", "none"], default="skip",
                     help="How to handle duplicates: skip (default), index (enforce UNIQUE), none (allow)")
     ap.add_argument("--sleep-ms", type=int, default=0, help="Sleep this many ms between runs")
     ap.add_argument("--dry-run", action="store_true", help="Print the run plan but do not execute")
     ap.add_argument("--verbose", action="store_true", help="Print each command line before executing")
     args = ap.parse_args()
 
+    # Normalize paths
     db_path = str(Path(args.db))
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    db_abs = str(Path(db_path).resolve())
 
     # Ensure schema & indexes
     ensure_schema(db_path)
@@ -227,10 +240,12 @@ def main():
 
     exe_path = Path(args.exe)
     if not exe_path.exists():
-        raise SystemExit(f"Executable not found: {exe_path} "
-                         f"(hint: pass --exe .\\out\\build\\x64-Debug\\src\\casino.exe)")
-    cwd = exe_path.parent
-    db_abs = str(Path(db_path).resolve())
+        raise SystemExit(
+            f"Executable not found: {exe_path} "
+            f"(hint: pass --exe .\\out\\build\\x64-Debug\\src\\casino.exe on Windows, "
+            f"or ./build/src/casino on Linux/macOS)"
+        )
+    exe_abs = str(exe_path.resolve())  # Use absolute path
 
     successes = failures = 0
     total = len(grid)
@@ -246,7 +261,7 @@ def main():
     for idx, p in enumerate(grid, start=1):
         tag = f"seed={p['seed']}, trials={p['trials']}, sides={p['sides']}, bet_on={p['bet_on']}, payout={p['payout']}, wager={p['wager']}"
         print(f"({idx}/{total}) running {tag} ...")
-        rc, tail = run_one(str(exe_path), db_abs, p, cwd, verbose=args.verbose)
+        rc, tail = run_one(exe_abs, db_abs, p, verbose=args.verbose)
         if rc == 0:
             successes += 1
             print(f"[OK] {tag}")
@@ -259,6 +274,7 @@ def main():
     print(f"\nDone. Successes: {successes}, Failures: {failures}")
     if failures > 0:
         print("Tip: to avoid accidental duplicates across runs, use --dedupe-mode index or keep --dedupe-mode skip.")
+
 
 if __name__ == "__main__":
     main()
