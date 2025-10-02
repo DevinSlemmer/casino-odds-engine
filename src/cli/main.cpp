@@ -129,6 +129,7 @@ int main(int argc, char** argv) {
             std::cout << "Saved to " << std::filesystem::absolute(args.db_path).string() << "\n";
         }
 
+
         return 0;
     }
     catch (const std::exception& e) {
@@ -136,3 +137,5 @@ int main(int argc, char** argv) {
         return 3;
     }
 }
+
+//Adding a comment to test if the commit actually worked
