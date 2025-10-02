@@ -33,7 +33,7 @@ jobs:
       - name: Run tests (ctest)
         run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
 
-      # ---- Python smoke test: C++ -> SQLite -> plot PNG ----
+      # ---- Python deps (used by both smoke + batch plots) ----
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -44,11 +44,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pandas matplotlib
 
-      # THREE runs so the plot has multiple x-points.
+      # =========================
+      # 1) ORIGINAL SMOKE TESTS
+      # =========================
+
+      # THREE single runs so the seed line has multiple x-points
       - name: Smoke runs (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           $exe = "build\src\${{ matrix.build_type }}\casino.exe"
           if (!(Test-Path $exe)) { $exe = "build\src\Release\casino.exe" }
           if (!(Test-Path $exe)) { throw "Could not find casino.exe" }
@@ -62,6 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifacts
           EXE="build/src/casino"
           [[ -x "$EXE" ]] || EXE="build/src/${{ matrix.build_type }}/casino"
           [[ -x "$EXE" ]] || { echo "Could not find casino executable"; exit 1; }
@@ -70,23 +76,82 @@ jobs:
           "$EXE" --db data/ci_demo.db --seed 123 --trials  5000  --sides 6 --bet-on 6 --payout 5 --wager 1
           "$EXE" --db data/ci_demo.db --seed 123 --trials 50000  --sides 6 --bet-on 6 --payout 5 --wager 1
 
-      # Plot step split per-OS to avoid line-continuation issues
+      # Plot the smoke DB
       - name: Plot EV (headless, Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:MPLBACKEND = 'Agg'
-          python scripts\plot_runs.py data\ci_demo.db --metric ev --with-ci --sides 6 --payout 5 --seed 123 --save artifacts\ci_ev.png
+          python scripts\plot_runs.py data\ci_demo.db --metric ev --with-ci --sides 6 --payout 5 --seed 123 --save artifacts\ci_ev_smoke.png
 
       - name: Plot EV (headless, Unix)
         if: runner.os != 'Windows'
         env:
           MPLBACKEND: Agg
         run: |
-          python scripts/plot_runs.py data/ci_demo.db --metric ev --with-ci --sides 6 --payout 5 --seed 123 --save artifacts/ci_ev.png
+          python scripts/plot_runs.py data/ci_demo.db --metric ev --with-ci --sides 6 --payout 5 --seed 123 --save artifacts/ci_ev_smoke.png
 
-      - name: Upload artifact (plot)
+      # =========================
+      # 2) NEW BATCH RUN (d6 & d8)
+      # =========================
+
+      - name: Batch run (Windows) — d6 and d8
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PYTHONWARNINGS = 'ignore'
+          # d6 fair (sides=6, payout=6), seeds 10..12, all faces, trials 100..3000 step 100
+          python scripts\run_batch.py --db data\ci_batch.db --exe build\src\${{ matrix.build_type }}\casino.exe `
+            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 6 --wagers 1
+          # d8 fair (sides=8, payout=8)
+          python scripts\run_batch.py --db data\ci_batch.db --exe build\src\${{ matrix.build_type }}\casino.exe `
+            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 8 --wagers 1
+
+      - name: Batch run (Unix) — d6 and d8
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE="build/src/casino"
+          [[ -x "$EXE" ]] || EXE="build/src/${{ matrix.build_type }}/casino"
+          python scripts/run_batch.py --db data/ci_batch.db --exe "$EXE" \
+            --seeds 10..12 --trials 100..3000:100 --sides 6 --all-sides --payouts 6 --wagers 1
+          python scripts/run_batch.py --db data/ci_batch.db --exe "$EXE" \
+            --seeds 10..12 --trials 100..3000:100 --sides 8 --all-sides --payouts 8 --wagers 1
+
+      # =========================
+      # 3) FOUR PLOTS from batch
+      # =========================
+
+      - name: Batch plots (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $env:MPLBACKEND = 'Agg'
+          # d6
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed      --save artifacts\batch_ev_by_seed_d6.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d6.png
+          # d8
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed      --save artifacts\batch_ev_by_seed_d8.png
+          python scripts\plot_runs.py data\ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed+bet  --save artifacts\batch_ev_by_seedbet_d8.png
+
+      - name: Batch plots (Unix)
+        if: runner.os != 'Windows'
+        env:
+          MPLBACKEND: Agg
+        run: |
+          mkdir -p artifacts
+          # d6
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed     --save artifacts/batch_ev_by_seed_d6.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 6 --payout 6 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d6.png
+          # d8
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed     --save artifacts/batch_ev_by_seed_d8.png
+          python scripts/plot_runs.py data/ci_batch.db --metric ev --with-ci --sides 8 --payout 8 --group-by seed+bet --save artifacts/batch_ev_by_seedbet_d8.png
+
+      # Upload *all* plots (smoke + batch)
+      - name: Upload artifacts (all plots)
         uses: actions/upload-artifact@v4
         with:
-          name: ci-plots-${{ matrix.os }}
-          path: artifacts/ci_ev.png
+          name: plots-${{ matrix.os }}
+          path: artifacts/*.png
