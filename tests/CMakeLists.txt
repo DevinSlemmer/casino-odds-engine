@@ -34,3 +34,17 @@ target_include_directories(test_db_insert PRIVATE
 )
 catch_discover_tests(test_db_insert)
 
+# (keep your existing contents)
+
+add_executable(test_wager_scale test_wager_scale.cpp)
+target_link_libraries(test_wager_scale PRIVATE Catch2::Catch2WithMain casino_engine)
+catch_discover_tests(test_wager_scale)
+
+add_executable(test_ev_fair_multi test_ev_fair_multi.cpp)
+target_link_libraries(test_ev_fair_multi PRIVATE Catch2::Catch2WithMain casino_engine)
+catch_discover_tests(test_ev_fair_multi)
+
+add_executable(test_db_roundtrip test_db_roundtrip.cpp)
+target_link_libraries(test_db_roundtrip PRIVATE Catch2::Catch2WithMain casino_engine sqlite3)
+target_include_directories(test_db_roundtrip PRIVATE ${PROJECT_SOURCE_DIR}/third_party/sqlite)
+catch_discover_tests(test_db_roundtrip)
